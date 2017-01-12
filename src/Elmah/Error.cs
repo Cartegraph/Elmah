@@ -30,6 +30,7 @@ namespace Elmah
     using System;
     using System.Diagnostics;
     using System.Globalization;
+    using System.Reflection;
     using System.Security;
     using System.Security.Principal;
     using System.Web;
@@ -40,7 +41,7 @@ namespace Elmah
     #endregion
 
     /// <summary>
-    /// Represents a logical application error (as opposed to the actual 
+    /// Represents a logical application error (as opposed to the actual
     /// exception it may be representing).
     /// </summary>
 
@@ -74,13 +75,13 @@ namespace Elmah
         /// from a given <see cref="Exception"/> instance.
         /// </summary>
 
-        public Error(Exception e) : 
+        public Error(Exception e) :
             this(e, null) {}
 
         /// <summary>
         /// Initializes a new instance of the <see cref="Error"/> class
-        /// from a given <see cref="Exception"/> instance and 
-        /// <see cref="HttpContext"/> instance representing the HTTP 
+        /// from a given <see cref="Exception"/> instance and
+        /// <see cref="HttpContext"/> instance representing the HTTP
         /// context during the exception.
         /// </summary>
 
@@ -140,15 +141,23 @@ namespace Elmah
                 {
                     // Hack for issue #140:
                     // http://code.google.com/p/elmah/issues/detail?id=140
- 
+
                     const string authPasswordKey = "AUTH_PASSWORD";
                     string authPassword = _serverVariables[authPasswordKey];
                     if (authPassword != null) // yes, mask empty too!
                         _serverVariables[authPasswordKey] = "*****";
                 }
 
-                _queryString = CopyCollection(request.QueryString);
-                _form = CopyCollection(request.Form);
+                // Bypass ASP.NET 4 request validation when accessing the request's QueryString and Form properties
+                // This is a workaround for issue #217 (https://code.google.com/p/elmah/issues/detail?id=217 and https://github.com/elmah/Elmah/issues/217)
+                // This is a surgical change to Elmah 1.2 SP2--the current release--and requires running on .NET 4
+                // Get the request's unvalidated properties via reflection at runtime (running on .NET 4) because they're not available at compile-time when targeting .NET 2
+                object unvalidatedRequestValues = request.GetType().GetProperty("Unvalidated", BindingFlags.Public | BindingFlags.Instance).GetValue(request, null);
+                NameValueCollection unvalidatedQueryString = unvalidatedRequestValues == null ? null : unvalidatedRequestValues.GetType().GetProperty("QueryString", BindingFlags.Public | BindingFlags.Instance).GetValue(unvalidatedRequestValues, null) as NameValueCollection;
+                NameValueCollection unvalidatedForm = unvalidatedRequestValues == null ? null : unvalidatedRequestValues.GetType().GetProperty("Form", BindingFlags.Public | BindingFlags.Instance).GetValue(unvalidatedRequestValues, null) as NameValueCollection;
+
+                _queryString = CopyCollection(unvalidatedQueryString);
+                _form = CopyCollection(unvalidatedForm);
                 _cookies = CopyCollection(request.Cookies);
             }
         }
@@ -161,16 +170,16 @@ namespace Elmah
             {
                 return e.GetHtmlErrorMessage();
             }
-            catch (SecurityException se) 
+            catch (SecurityException se)
             {
-                // In partial trust environments, HttpException.GetHtmlErrorMessage() 
+                // In partial trust environments, HttpException.GetHtmlErrorMessage()
                 // has been known to throw:
-                // System.Security.SecurityException: Request for the 
+                // System.Security.SecurityException: Request for the
                 // permission of type 'System.Web.AspNetHostingPermission' failed.
-                // 
+                //
                 // See issue #179 for more background:
                 // http://code.google.com/p/elmah/issues/detail?id=179
-                
+
                 Trace.WriteLine(se);
                 return null;
             }
@@ -181,8 +190,8 @@ namespace Elmah
         /// instance.
         /// </summary>
         /// <remarks>
-        /// This is a run-time property only that is not written or read 
-        /// during XML serialization via <see cref="ErrorXml.Decode"/> and 
+        /// This is a run-time property only that is not written or read
+        /// during XML serialization via <see cref="ErrorXml.Decode"/> and
         /// <see cref="ErrorXml.Encode(Error,XmlWriter)"/>.
         /// </remarks>
 
@@ -196,7 +205,7 @@ namespace Elmah
         /// </summary>
 
         public string ApplicationName
-        { 
+        {
             get { return Mask.NullString(_applicationName); }
             set { _applicationName = value; }
         }
@@ -204,9 +213,9 @@ namespace Elmah
         /// <summary>
         /// Gets or sets name of host machine where this error occurred.
         /// </summary>
-        
+
         public string HostName
-        { 
+        {
             get { return Mask.NullString(_hostName); }
             set { _hostName = value; }
         }
@@ -214,9 +223,9 @@ namespace Elmah
         /// <summary>
         /// Gets or sets the type, class or category of the error.
         /// </summary>
-        
+
         public string Type
-        { 
+        {
             get { return Mask.NullString(_typeName); }
             set { _typeName = value; }
         }
@@ -224,9 +233,9 @@ namespace Elmah
         /// <summary>
         /// Gets or sets the source that is the cause of the error.
         /// </summary>
-        
+
         public string Source
-        { 
+        {
             get { return Mask.NullString(_source); }
             set { _source = value; }
         }
@@ -234,9 +243,9 @@ namespace Elmah
         /// <summary>
         /// Gets or sets a brief text describing the error.
         /// </summary>
-        
-        public string Message 
-        { 
+
+        public string Message
+        {
             get { return Mask.NullString(_message); }
             set { _message = value; }
         }
@@ -247,53 +256,53 @@ namespace Elmah
         /// </summary>
 
         public string Detail
-        { 
+        {
             get { return Mask.NullString(_detail); }
             set { _detail = value; }
         }
 
         /// <summary>
-        /// Gets or sets the user logged into the application at the time 
+        /// Gets or sets the user logged into the application at the time
         /// of the error.
         /// </summary>
-        
-        public string User 
-        { 
+
+        public string User
+        {
             get { return Mask.NullString(_user); }
             set { _user = value; }
         }
 
         /// <summary>
-        /// Gets or sets the date and time (in local time) at which the 
+        /// Gets or sets the date and time (in local time) at which the
         /// error occurred.
         /// </summary>
-        
-        public DateTime Time 
-        { 
+
+        public DateTime Time
+        {
             get { return _time; }
             set { _time = value; }
         }
 
         /// <summary>
-        /// Gets or sets the HTTP status code of the output returned to the 
+        /// Gets or sets the HTTP status code of the output returned to the
         /// client for the error.
         /// </summary>
         /// <remarks>
-        /// For cases where this value cannot always be reliably determined, 
+        /// For cases where this value cannot always be reliably determined,
         /// the value may be reported as zero.
         /// </remarks>
-        
-        public int StatusCode 
-        { 
+
+        public int StatusCode
+        {
             get { return _statusCode; }
             set { _statusCode = value; }
         }
 
         /// <summary>
-        /// Gets or sets the HTML message generated by the web host (ASP.NET) 
+        /// Gets or sets the HTML message generated by the web host (ASP.NET)
         /// for the given error.
         /// </summary>
-        
+
         public string WebHostHtmlMessage
         {
             get { return Mask.NullString(_webHostHtmlMessage); }
@@ -304,9 +313,9 @@ namespace Elmah
         /// Gets a collection representing the Web server variables
         /// captured as part of diagnostic data for the error.
         /// </summary>
-        
-        public NameValueCollection ServerVariables 
-        { 
+
+        public NameValueCollection ServerVariables
+        {
             get { return FaultIn(ref _serverVariables);  }
         }
 
@@ -314,19 +323,19 @@ namespace Elmah
         /// Gets a collection representing the Web query string variables
         /// captured as part of diagnostic data for the error.
         /// </summary>
-        
-        public NameValueCollection QueryString 
-        { 
-            get { return FaultIn(ref _queryString); } 
+
+        public NameValueCollection QueryString
+        {
+            get { return FaultIn(ref _queryString); }
         }
 
         /// <summary>
-        /// Gets a collection representing the form variables captured as 
+        /// Gets a collection representing the form variables captured as
         /// part of diagnostic data for the error.
         /// </summary>
-        
-        public NameValueCollection Form 
-        { 
+
+        public NameValueCollection Form
+        {
             get { return FaultIn(ref _form); }
         }
 
@@ -335,7 +344,7 @@ namespace Elmah
         /// captured as part of diagnostic data for the error.
         /// </summary>
 
-        public NameValueCollection Cookies 
+        public NameValueCollection Cookies
         {
             get { return FaultIn(ref _cookies); }
         }
@@ -393,7 +402,7 @@ namespace Elmah
                 HttpCookie cookie = cookies[i];
 
                 //
-                // NOTE: We drop the Path and Domain properties of the 
+                // NOTE: We drop the Path and Domain properties of the
                 // cookie for sake of simplicity.
                 //
 
